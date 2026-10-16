@@ -16,3 +16,5 @@ npm
 docker.io
 openjdk-17-jdk
 maven
+r-base
+chromium-browser
