@@ -36,8 +36,9 @@ created, its cloud-init `user-data` clones this repository and:
 - **No secrets in this repo.** API keys and tokens live only in the
   droplet's `user-data`, are written to a `0600` file at boot, and are
   shredded after the bootstrap finishes.
-- `kimi-task.md` runs with `--yolo` (no interactive approvals). Only list
-  repositories you trust in `repos.txt`.
+- `kimi-task.md` runs headlessly via `kimi -p`, which auto-approves all
+  actions with no human in the loop. Only list repositories you trust
+  in `repos.txt`.
 - Private repositories require a fine-grained GitHub PAT (`GH_TOKEN`) in
   the `user-data`. With a public bootstrap repo, prefer cloning public
   repos only.

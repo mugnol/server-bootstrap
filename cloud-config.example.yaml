@@ -1,0 +1,97 @@
+#cloud-config
+# ============================================================================
+# DigitalOcean droplet user-data TEMPLATE (ASCII-safe).
+#
+# HOW TO USE:
+#   1. Copy this file to a private location as "cloud-config.yaml"
+#   2. Fill in your SSH public key and your Kimi Code Console API key
+#      (create one at https://www.kimi.com/code/console)
+#   3. Paste the FILLED file into: Create Droplet -> Advanced Options
+#      -> User Data
+#
+# NEVER commit the filled file anywhere - it contains secrets.
+# ============================================================================
+
+users:
+  - name: dev
+    groups: sudo
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ssh-ed25519 < * * * Copy here * * * >
+
+package_update: true
+packages:
+  - git
+  - curl
+
+write_files:
+  # Secrets and variables - 0600, root-only, shredded at the end of the run
+  - path: /opt/bootstrap/vars.env
+    permissions: "0600"
+    content: |
+      BOOTSTRAP_REPO=https://github.com/mugnol/server-bootstrap.git
+      KIMI_API_KEY=sk-kimi- < * * * Copy here * * * >
+      GH_TOKEN=
+      # GH_TOKEN is optional: fine-grained GitHub PAT, only for private repos
+
+  - path: /opt/bootstrap/run.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      source /opt/bootstrap/vars.env
+      DEV_HOME=/home/dev
+
+      # 1. Fetch the lists from GitHub
+      sudo -u dev git clone "$BOOTSTRAP_REPO" "$DEV_HOME/bootstrap"
+
+      # 2. Install the tools listed in tools.txt
+      grep -vE '^\s*(#|$)' "$DEV_HOME/bootstrap/tools.txt" | xargs apt-get install -y
+
+      # 3. Install Kimi Code CLI (as the dev user)
+      sudo -u dev bash -c 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'
+
+      # 4. Configure the Kimi Code API key (membership endpoint, api.kimi.ai)
+      sudo -u dev mkdir -p "$DEV_HOME/.kimi-code"
+      cat > "$DEV_HOME/.kimi-code/config.toml" <<EOF
+      default_model = "kimi-code/k3-256k"
+
+      [providers.kimi-code]
+      type = "kimi"
+      base_url = "https://api.kimi.ai/coding/v1"
+      api_key = "$KIMI_API_KEY"
+
+      [models."kimi-code/k3-256k"]
+      provider = "kimi-code"
+      model = "k3-256k"
+      max_context_size = 262144
+      EOF
+      chown dev:dev "$DEV_HOME/.kimi-code/config.toml"
+      chmod 600 "$DEV_HOME/.kimi-code/config.toml"
+
+      # 5. Clone the projects listed in repos.txt
+      sudo -u dev mkdir -p "$DEV_HOME/projects"
+      while read -r repo; do
+        [[ -z "$repo" || "$repo" =~ ^# ]] && continue
+        name=$(basename "$repo")
+        if [ -n "${GH_TOKEN:-}" ]; then
+          url="https://${GH_TOKEN}@github.com/${repo}.git"
+        else
+          url="https://github.com/${repo}.git"
+        fi
+        sudo -u dev git clone "$url" "$DEV_HOME/projects/$name" || true
+      done < "$DEV_HOME/bootstrap/repos.txt"
+
+      # 6. Let Kimi Code install and validate the projects
+      if [ -f "$DEV_HOME/bootstrap/kimi-task.md" ]; then
+        sudo -u dev bash -c "cd $DEV_HOME/projects && \
+          \$HOME/.kimi-code/bin/kimi -p \"\$(cat $DEV_HOME/bootstrap/kimi-task.md)\"" \
+          > /var/log/kimi-bootstrap.log 2>&1 || true
+      fi
+
+      # 7. Remove secrets from disk
+      shred -u /opt/bootstrap/vars.env 2>/dev/null || rm -f /opt/bootstrap/vars.env
+
+runcmd:
+  - /opt/bootstrap/run.sh
